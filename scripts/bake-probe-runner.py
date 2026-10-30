@@ -19,6 +19,9 @@ sys.path.insert(0, os.path.join(product, "hooks"))
 sys.dont_write_bytecode = True
 
 import hook_runner as hr  # noqa: E402
+import notification_context  # noqa: E402
+import runner_core  # noqa: E402
+import webhook_dispatch  # noqa: E402
 
 req = json.load(sys.stdin)
 src_path = os.path.join(product, "hooks", "hook_runner.py")
@@ -50,27 +53,27 @@ out["effectiveDefault"] = eff
 # ---- toast strings ------------------------------------------------------------
 ln, urgency_line = find_line('urgency = "critical" if hook_type in')
 critical = ast.literal_eval(re.search(r"hook_type in (\([^)]*\))", urgency_line).group(1))
-_, title_line = find_line("notif_sent = send_desktop_notification(_invoker_display_name(), context, urgency)")
+_, title_line = find_line("notif_sent = desktop_notification.send_desktop_notification(runner_core._invoker_display_name(), context, urgency)")
 detail_level = "standard"
 toasts = []
 for ev in req["toastEvents"]:
     stdin_data = ev["stdin"]
     hook_type = ev["hookType"]
-    body = hr.get_notification_context(hook_type, stdin_data, detail_level)
-    body += hr._format_context_suffix(stdin_data, detail_level)
+    body = notification_context.get_notification_context(hook_type, stdin_data, detail_level)
+    body += notification_context._format_context_suffix(stdin_data, detail_level)
     toasts.append({
         "event": ev["event"],
         "hookType": hook_type,
         "detailLevel": detail_level,
-        "title": hr._invoker_display_name(),
+        "title": runner_core._invoker_display_name(),
         "body": body,
         "urgency": "critical" if hook_type in critical else "normal",
         "stdin": stdin_data,
     })
 out["toasts"] = toasts
 out["toastDerivation"] = {
-    "title": "hook_runner._invoker_display_name()",
-    "body": "hook_runner.get_notification_context(hook_type, stdin, detail_level) + hook_runner._format_context_suffix(...)",
+    "title": "runner_core._invoker_display_name()",
+    "body": "notification_context.get_notification_context(hook_type, stdin, detail_level) + notification_context._format_context_suffix(...)",
     "urgency": {
         "derivedBy": "source-read",
         "file": "hooks/hook_runner.py",
@@ -79,7 +82,7 @@ out["toastDerivation"] = {
         "criticalHookTypes": list(critical),
     },
     "dispatch": {"derivedBy": "source-read", "file": "hooks/hook_runner.py",
-                 "line": find_line("notif_sent = send_desktop_notification(_invoker_display_name(), context, urgency)")[0],
+                 "line": find_line("notif_sent = desktop_notification.send_desktop_notification(runner_core._invoker_display_name(), context, urgency)")[0],
                  "text": title_line},
 }
 
@@ -105,16 +108,16 @@ class _FakePopen:
         self.stdin = _FakeStdin(box)
 
 
-hr.subprocess.Popen = _FakePopen
+webhook_dispatch.subprocess.Popen = _FakePopen
 webhooks = []
 for ev in req["toastEvents"]:
     stdin_data = ev["stdin"]
     hook_type = ev["hookType"]
-    context = hr.get_notification_context(hook_type, stdin_data, detail_level) + hr._format_context_suffix(stdin_data, detail_level)
+    context = notification_context.get_notification_context(hook_type, stdin_data, detail_level) + notification_context._format_context_suffix(stdin_data, detail_level)
     for fmt in req["webhookFormats"]:
         captured.clear()
         cfg = {"webhook_settings": {"enabled": True, "url": "https://example.invalid/echook-bake-probe", "format": fmt}}
-        hr.send_webhook(hook_type, context, stdin_data, cfg)
+        webhook_dispatch.send_webhook(hook_type, context, stdin_data, cfg)
         if len(captured) != 1 or "body" not in captured[0]:
             raise SystemExit("probe: webhook capture failed for %s/%s" % (ev["event"], fmt))
         box = captured[0]

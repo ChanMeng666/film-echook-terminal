@@ -51,12 +51,16 @@ export const DEMO = {
   /** the lock screen's clock: the conventional demo time, not a real one */
   phoneClock: "9:41",
   phoneDay: "Tuesday 6 October",
+  /** the subagent the README card opens: its first request, and what it reads */
+  agentTask: "find how retries are configured",
+  agentRead: "src/queue/worker.ts",
+  agentNote: "Retries are set in src/queue/worker.ts.",
   /** the other app in CHANNELS: a document, drawn as grey bars with one heading */
   otherAppTitle: "Q4 planning",
 } as const;
 
 export const demoStrings = (): string[] => [
   DEMO.repo, DEMO.cwd, DEMO.title, DEMO.request, DEMO.working, DEMO.approved, DEMO.mutedReply,
-  DEMO.phoneClock, DEMO.phoneDay, DEMO.otherAppTitle, ...DEMO.tools.map((t) => `${t.verb} ${t.target}`),
+  DEMO.phoneClock, DEMO.phoneDay, DEMO.otherAppTitle, DEMO.agentTask, DEMO.agentRead, DEMO.agentNote, ...DEMO.tools.map((t) => `${t.verb} ${t.target}`),
   DEMO.earlier.request, DEMO.earlier.answer, ...DEMO.earlier.tools.map((t) => `${t.verb} ${t.target}`),
 ];

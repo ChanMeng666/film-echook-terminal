@@ -69,6 +69,9 @@ Invented, generic, and in one file (C7). None of it is a claim about the product
 | `Muted for an hour.` | terminal, TALK | The agent's reply after running the real `audio-hooks snooze 1h`; the real result above it reads `"remaining_seconds": 3600`. |
 | `9:41` | phone | A conventional demo clock, not a real time. |
 | `Tuesday 6 October` | phone | The day this film was made. |
+| `find how retries are configured` | README card | The fictional subagent's task. |
+| `src/queue/worker.ts` | README card | A file the fictional subagent reads, already in the demo session. |
+| `Retries are set in src/queue/worker.ts.` | README card | The fictional subagent's reply. |
 | `Q4 planning` | the other app in CHANNELS | A heading in a stylised, blurred document that carries no claim. |
 
 ## Product strings that look like copy

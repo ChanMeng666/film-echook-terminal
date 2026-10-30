@@ -271,7 +271,7 @@ const DEMO = {
   model: { id: "claude-sonnet-5-5", display_name: "Sonnet 5.5" },
   repo: { owner: "acme", name: "checkout-service" },
   branch: "feat/retry-queue",
-  ccVersion: "2.1.288",
+  ccVersion: "2.1.314",
   // 5 h window resets "today 9pm" (UTC clock, TZ pinned); weekly resets on a fixed far date so the date text is byte-stable
   fiveHourResetsAt: (() => { const n = new Date(); return Math.floor(Date.UTC(n.getUTCFullYear(), n.getUTCMonth(), n.getUTCDate(), 21, 0, 0) / 1000); })(),
   weeklyResetsAt: Math.floor(Date.UTC(2030, 0, 4, 21, 0, 0) / 1000),
@@ -306,6 +306,24 @@ for (const [name, st] of Object.entries(DEMO.states)) {
   payloads[name] = p;
 }
 payloads.snooze = payloads.green;
+
+// ── the viewed agent: the real script, fed what Claude Code and view-sensor.ts leave on disk ──
+// Since 7.2.0 a status line follows the agent in view. The transcript and sidecar below are demo
+// inputs; the row that comes out is the script's own, so `~200K` and the marks are never typed.
+const AGENT = { id: "a7f3c1e2d4b6", type: "Explore", model: "claude-haiku-5-5", effort: "low" };
+const SCRATCH_TEMP = join(BAKE_HOME, "temp");
+const TRANSCRIPT = join(BAKE_HOME, "projects", "demo.jsonl");
+const AGENT_DIR = join(BAKE_HOME, "projects", "demo", "subagents");
+mkdirSync(AGENT_DIR, { recursive: true });
+mkdirSync(join(SCRATCH_TEMP, "claude_audio_hooks_queue"), { recursive: true });
+writeFileSync(join(AGENT_DIR, `agent-${AGENT.id}.jsonl`), JSON.stringify({
+  type: "assistant", effort: AGENT.effort, requestedModel: AGENT.model,
+  message: { model: AGENT.model, usage: { input_tokens: 1200, cache_read_input_tokens: 26500, cache_creation_input_tokens: 1300, output_tokens: 420 } },
+}) + "\n");
+payloads.cardAgent = { ...payloads.green, transcript_path: TRANSCRIPT };
+payloads.stripAgent = payloads.cardAgent;
+const VIEWED = new Set(["cardAgent", "stripAgent"]);
+for (const [label, base] of Object.entries({ card: "green", cardSnooze: "green", stripMain: "green" })) payloads[label] = payloads[base];
 
 const PALETTE = { // VS Code Dark+ integrated-terminal colours
   30: "#000000", 31: "#cd3131", 32: "#0dbc79", 33: "#e5e510", 34: "#2472c8", 35: "#bc3fbc", 36: "#11a8cd", 37: "#e5e5e5",
@@ -358,8 +376,13 @@ const WIDTHS = { wide: 150, medium: 110, narrow: 58 };
 function renderStatus(state, label) {
   const out = [];
   for (const [wname, cols] of Object.entries(WIDTHS)) {
-    const r = run("python", ["-B", join(PRODUCT, "bin", "audio-hooks-statusline.py")],
-      { input: JSON.stringify({ ...payloads[state], session_id: `demo-${label}-${wname}` }), env: childEnv({ COLUMNS: String(cols) }), cwd: REPO });
+    const script = join(PRODUCT, "bin", "audio-hooks-statusline.py");
+    const sid = `demo-${label}-${wname}`;
+    const env = childEnv({ COLUMNS: String(cols), TEMP: SCRATCH_TEMP, TMP: SCRATCH_TEMP, TMPDIR: SCRATCH_TEMP });
+    if (VIEWED.has(state)) writeFileSync(join(SCRATCH_TEMP, "claude_audio_hooks_queue", `viewed_agent.${sid}.json`), JSON.stringify({ agent_id: AGENT.id, type: AGENT.type }));
+    // Since 7.2.0 a render only reads its caches, and a detached process fills them; a bake cannot wait on that.
+    run("python", ["-B", script, "--refresh-cache", sid, DEMO_CWD], { env, cwd: REPO });
+    const r = run("python", ["-B", script], { input: JSON.stringify({ ...payloads[state], session_id: sid }), env, cwd: REPO });
     const raw = r.stdout.replace(/\r\n/g, "\n").replace(/\n$/, "");
     if (!raw) fail(`status line produced no output for ${label}/${wname}`);
     out.push({ state: label, width: wname, columns: cols, raw, rows: raw.split("\n").map(parseAnsi) });
@@ -377,7 +400,7 @@ const mapping = (said, cmd) => {
 };
 const volatile = { snooze: ["until", "until_iso"], "snooze-status": ["until", "until_iso", "remaining_seconds"] };
 function talk(said, skillSaid, argv, volKey) {
-  if (skillSaid) mapping(skillSaid, "audio-hooks " + argv.join(" "));
+  if (skillSaid) mapping(skillSaid, argv[0]); // the skill words the command, not each argument
   const r = cli(...argv);
   let parsed = null;
   try { parsed = JSON.parse(r.stdout); } catch { /* keep null */ }
@@ -390,13 +413,21 @@ function talk(said, skillSaid, argv, volKey) {
   return { said, skillSaid, command: "audio-hooks " + argv.join(" "), argv, exitCode: r.status, stdout, parsed: parsedOut, volatileFields: vol };
 }
 const talkHooksList = hooksList; // captured before any TALK command mutates the throwaway data dir
-const snoozeStep = talk("mute audio for an hour", "shut up for an hour", ["snooze", "1h"], "snooze");
+const snoozeStep = talk("mute audio for an hour", "- mute:", ["snooze", "1h"], "snooze");
 Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1500); // let the countdown tick past 1h so it reads 59m on every run
 const snoozeStatus = talk("(status after muting)", null, ["snooze", "status"], "snooze-status");
 renders.push(...renderStatus("snooze", "snooze"));
-const themeStep = talk("switch to chimes", "switch to chimes", ["theme", "set", "custom"]);
+// The README card carries no version number: a picture cannot be re-baked on every release, and it went stale.
+const CARD_HIDDEN = '["version","cc_version"]';
+cli("set", "statusline_settings.hidden_segments", CARD_HIDDEN);
+renders.push(...renderStatus("cardSnooze", "cardSnooze"));
+const themeStep = talk("switch to chimes", "- theme, webhook", ["theme", "set", "custom"]);
 const themeAfter = cliJson("theme", "list");
 cli("snooze", "off"); cli("theme", "set", "default"); // leave the throwaway dir tidy (it is wiped next bake anyway)
+renders.push(...renderStatus("card", "card"), ...renderStatus("cardAgent", "cardAgent"));
+// The one row of the README's feature strip: what changes when the view does.
+cli("set", "statusline_settings.visible_segments", '["model","agent","effort","context"]');
+renders.push(...renderStatus("stripMain", "stripMain"), ...renderStatus("stripAgent", "stripAgent"));
 
 // ── assemble ──────────────────────────────────────────────────────────────────
 const out = {
@@ -424,9 +455,11 @@ const out = {
       "cwd, repo owner/name and branch are demo values; git state (±3 changes) is from a real throwaway repo with remote https://github.com/acme/checkout-service.git on branch feat/retry-queue.",
       "TZ=UTC; the 5 h reset is '9pm' on the render day, the weekly reset is a fixed far date, so the output is byte-stable.",
       "The 'branch' segment shows workspace.git_worktree exactly as the product reads it.",
+      "States card, cardSnooze and cardAgent hide the version and cc_version segments; stripMain and stripAgent show only model, agent, effort and context. cardAgent and stripAgent run with a demo sidecar and subagent transcript, as Claude Code and hooks/view-sensor.ts would leave them.",
       "Not rendered: remote, prompt_cache (opt-in segments), pr, worktree, session_name, agent, vim, thinking, output_style, spend_limit, added_dirs, exceeds_200k (optional payload fields, not part of the demo).",
     ],
     payloads,
+    viewedAgent: AGENT,
     renders,
   },
   talk: {
