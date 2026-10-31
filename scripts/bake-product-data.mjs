@@ -327,6 +327,10 @@ writeFileSync(join(AGENT_DIR, `agent-${AGENT.id}.jsonl`), JSON.stringify({
   type: "assistant", effort: AGENT.effort, requestedModel: AGENT.model,
   message: { model: AGENT.model, usage: { input_tokens: 1200, cache_read_input_tokens: 26500, cache_creation_input_tokens: 1300, output_tokens: 420 } },
 }) + "\n");
+// Since 7.2.3 the script estimates another model's window from Claude Code's catalog cache.
+const CATALOG = join(BAKE_HOME, ".claude", "cache", "model-catalog");
+mkdirSync(CATALOG, { recursive: true });
+writeFileSync(join(CATALOG, "demo-cc.json"), JSON.stringify({ version: 2, catalog: { config: { models: [{ id: AGENT.model, runtime: { max_input_tokens: 1000000 } }] } } }));
 payloads.cardAgent = { ...payloads.green, transcript_path: TRANSCRIPT };
 payloads.stripAgent = payloads.cardAgent;
 const VIEWED = new Set(["cardAgent", "stripAgent"]);
@@ -462,7 +466,7 @@ const out = {
       "cwd, repo owner/name and branch are demo values; git state (±3 changes) is from a real throwaway repo with remote https://github.com/acme/checkout-service.git on branch feat/retry-queue.",
       "TZ=UTC; the 5 h reset is '9pm' on the render day, the weekly reset is a fixed far date, so the output is byte-stable.",
       "The 'branch' segment shows workspace.git_worktree exactly as the product reads it.",
-      "States card, cardSnooze and cardAgent hide the version and cc_version segments; stripMain and stripAgent show only model, agent, effort and context. cardAgent and stripAgent run with a demo sidecar and subagent transcript, as Claude Code and hooks/view-sensor.ts would leave them.",
+      "States card, cardSnooze and cardAgent hide the version and cc_version segments; stripMain and stripAgent show only model, agent, effort and context. cardAgent and stripAgent run with a demo sidecar, subagent transcript and model catalog row, as Claude Code and hooks/view-sensor.ts would leave them.",
       "Not rendered: remote, prompt_cache (opt-in segments), pr, worktree, session_name, agent, vim, thinking, output_style, spend_limit, added_dirs, exceeds_200k (optional payload fields, not part of the demo).",
     ],
     payloads,
