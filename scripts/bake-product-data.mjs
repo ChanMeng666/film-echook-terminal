@@ -23,7 +23,7 @@
  *   counts:   { events, variants, slots, soundsPerTheme:{default,custom}, filesPerTheme:{default,custom},
  *               defaultOnEvents, defaultOnVariants, statuslineSegments, statuslineDefaultSegments,
  *               themes, editors }            // every number derived; see `derivedBy`
- *   crossCheck: { projectStatus: {states, documented:{..}, matches:{..}}, notes:[...] },
+ *   crossCheck: { documented:{..}, matches:{..}, allMatch, sources:{..}, notes:[...] },
  *   themes:   ["default","custom"], editors:["claude-code","cursor","codex"],
  *   events:   [{ name, kind:"event"|"variant", parent|null, defaultOn, description,
  *                audioFile:{default,custom}, voiceText, chimePrompt }],   // 39 + 47, manifest order
@@ -183,7 +183,7 @@ for (const e of list) for (const th of ["default", "custom"]) {
   if (!audio[`${th}/${e.audioFile[th]}`]) fail(`event ${e.name}: ${th} sound ${e.audioFile[th]} not in audio/${th}`);
 }
 
-// ── counts (derived) and cross-check against docs/PROJECT_STATUS.md ──────────
+// ── counts (derived) and cross-check against the product's own sources ───────
 const distinct = (th) => new Set(list.map((e) => e.audioFile[th])).size;
 const counts = {
   events: events.length,
@@ -202,31 +202,38 @@ const counts = {
   editors: Object.keys(manifest.supported_editors).length,
 };
 const manifestDefaultOn = events.filter((e) => e.default).length;
-const status = readFileSync(join(PRODUCT, "docs", "PROJECT_STATUS.md"), "utf8");
-const claim = (re) => { const m = re.exec(status); return m ? Number(m[1]) : null; };
+const defaultPrefs = JSON.parse(readFileSync(join(PRODUCT, "config", "default_preferences.json"), "utf8"));
+const documentedFiles = (th) => audioManifest.files.filter((f) => f.theme === th).length;
+// Each value comes from a different product source than the one `counts` used, so a check can fail.
 const documented = {
-  events: claim(/Canonical hook events \| (\d+)/),
-  variants: claim(/Matcher variants \| (\d+)/),
-  soundsPerTheme: claim(/Distinct sounds \| (\d+) per theme/),
-  filesPerTheme: claim(/(\d+) mp3 files per theme/),
-  statuslineSegments: claim(/Status line segments \| (\d+)/),
-  statuslineDefaultSegments: claim(/of which (\d+) are in the default set/),
+  events: Object.keys(defaultPrefs.enabled_hooks).filter((k) => !k.startsWith("_")).length,
+  variants: hooksList.variants.length,
+  soundsPerTheme: new Set([...hooksList.hooks, ...hooksList.variants].map((h) => h.audio_file)).size,
+  filesPerTheme: { default: documentedFiles("default"), custom: documentedFiles("custom") },
+  statuslineSegments: segments.line1.length + segments.line2.length,
 };
 const matches = {
   events: documented.events === counts.events,
   variants: documented.variants === counts.variants,
   soundsPerTheme: documented.soundsPerTheme === counts.soundsPerTheme.default && documented.soundsPerTheme === counts.soundsPerTheme.custom,
-  filesPerTheme: documented.filesPerTheme === counts.filesPerTheme.default && documented.filesPerTheme === counts.filesPerTheme.custom,
+  filesPerTheme: documented.filesPerTheme.default === counts.filesPerTheme.default && documented.filesPerTheme.custom === counts.filesPerTheme.custom,
   statuslineSegments: documented.statuslineSegments === counts.statuslineSegments,
-  statuslineDefaultSegments: documented.statuslineDefaultSegments === counts.statuslineDefaultSegments,
   defaultOnEvents: counts.defaultOnEvents === manifestDefaultOn && counts.defaultOnEvents === 3,
 };
 const crossCheck = { documented, matches, allMatch: Object.values(matches).every(Boolean),
+  sources: {
+    events: "config/default_preferences.json .enabled_hooks",
+    variants: "audio-hooks hooks list --variants",
+    soundsPerTheme: "distinct audio_file in audio-hooks hooks list --variants",
+    filesPerTheme: "config/audio_manifest.json .files",
+    statuslineSegments: "audio-hooks statusline segments .line1 + .line2",
+  },
   notes: [
     "defaultOnEvents documented value (3) comes from AGENTS.md / the 'hooks enabled by default' set; compared with manifest.hooks[].default and hook_runner.is_hook_enabled on a fresh data dir.",
     `defaultOnVariants = ${counts.defaultOnVariants}: variants of an on-by-default parent that are on with no user config (the runner's own is_hook_enabled). They are not counted in the '3 on by default'.`,
+    "statuslineDefaultSegments has no second source: only the catalogue behind audio-hooks statusline segments says which segments are default, so it is not cross-checked.",
   ] };
-if (!crossCheck.allMatch) console.warn("bake: WARNING counts disagree with docs/PROJECT_STATUS.md:", JSON.stringify(matches));
+if (!crossCheck.allMatch) console.warn("bake: WARNING counts disagree with the product's own sources:", JSON.stringify(matches));
 
 // ── film sounds ──────────────────────────────────────────────────────────────
 const FILM = [
@@ -320,6 +327,10 @@ writeFileSync(join(AGENT_DIR, `agent-${AGENT.id}.jsonl`), JSON.stringify({
   type: "assistant", effort: AGENT.effort, requestedModel: AGENT.model,
   message: { model: AGENT.model, usage: { input_tokens: 1200, cache_read_input_tokens: 26500, cache_creation_input_tokens: 1300, output_tokens: 420 } },
 }) + "\n");
+// Since 7.2.3 the script estimates another model's window from Claude Code's catalog cache.
+const CATALOG = join(BAKE_HOME, ".claude", "cache", "model-catalog");
+mkdirSync(CATALOG, { recursive: true });
+writeFileSync(join(CATALOG, "demo-cc.json"), JSON.stringify({ version: 2, catalog: { config: { models: [{ id: AGENT.model, runtime: { max_input_tokens: 1000000 } }] } } }));
 payloads.cardAgent = { ...payloads.green, transcript_path: TRANSCRIPT };
 payloads.stripAgent = payloads.cardAgent;
 const VIEWED = new Set(["cardAgent", "stripAgent"]);
@@ -455,7 +466,7 @@ const out = {
       "cwd, repo owner/name and branch are demo values; git state (±3 changes) is from a real throwaway repo with remote https://github.com/acme/checkout-service.git on branch feat/retry-queue.",
       "TZ=UTC; the 5 h reset is '9pm' on the render day, the weekly reset is a fixed far date, so the output is byte-stable.",
       "The 'branch' segment shows workspace.git_worktree exactly as the product reads it.",
-      "States card, cardSnooze and cardAgent hide the version and cc_version segments; stripMain and stripAgent show only model, agent, effort and context. cardAgent and stripAgent run with a demo sidecar and subagent transcript, as Claude Code and hooks/view-sensor.ts would leave them.",
+      "States card, cardSnooze and cardAgent hide the version and cc_version segments; stripMain and stripAgent show only model, agent, effort and context. cardAgent and stripAgent run with a demo sidecar, subagent transcript and model catalog row, as Claude Code and hooks/view-sensor.ts would leave them.",
       "Not rendered: remote, prompt_cache (opt-in segments), pr, worktree, session_name, agent, vim, thinking, output_style, spend_limit, added_dirs, exceeds_200k (optional payload fields, not part of the demo).",
     ],
     payloads,
@@ -492,5 +503,5 @@ if (CHECK) {
   writeFileSync(OUT, text);
   console.log(`bake: wrote ${OUT}`);
   console.log(`  product ${manifest.version} @ ${commit.slice(0, 7)} · ${counts.events} events · ${counts.variants} variants · ${JSON.stringify(counts.soundsPerTheme)} sounds/theme · ${counts.statuslineSegments} segments (${counts.statuslineDefaultSegments} default) · default-on ${counts.defaultOnEvents}`);
-  console.log(`  cross-check vs docs/PROJECT_STATUS.md: ${crossCheck.allMatch ? "all match" : "MISMATCH " + JSON.stringify(matches)}`);
+  console.log(`  cross-check vs the product's own sources: ${crossCheck.allMatch ? "all match" : "MISMATCH " + JSON.stringify(matches)}`);
 }
